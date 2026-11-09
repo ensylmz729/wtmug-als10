@@ -5,8 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ALŞ08 · P2P Transfer</title>
 <link rel="manifest" href="manifest.json">
+
+<!-- Kütüphaneler doğrudan head'de: QR üretimi kesin çalışsın -->
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+
 <style>
   :root{--bg:#0b1220;--card:#111c33;--ink:#e6edf7;--muted:#8ba0bf;--acc:#3b82f6;--ok:#10b981}
   *{box-sizing:border-box}
@@ -28,8 +32,8 @@
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   input[type=text],input[type=file]{width:100%;padding:10px;border-radius:8px;
        border:1px solid #334155;background:#0f1a2e;color:var(--ink)}
-  #qrBox{display:flex;justify-content:center;background:white;padding:10px;border-radius:12px}
-  #qrBox canvas{max-width:220px;height:auto}
+  #qrBox{display:flex;justify-content:center;background:#fff;padding:10px;border-radius:12px}
+  #qrCanvas{width:220px;height:220px;display:block}
   #log{font-family:ui-monospace,Menlo,monospace;font-size:.8rem;color:var(--muted);
        max-height:160px;overflow:auto;white-space:pre-wrap}
   #chat{display:flex;flex-direction:column;gap:8px;min-height:180px;max-height:40vh;
@@ -40,8 +44,7 @@
   .msg img,.msg video{max-width:220px;border-radius:8px;display:block;margin-top:6px}
   .progress{height:8px;background:#1e293b;border-radius:6px;overflow:hidden;margin-top:6px}
   .progress > div{height:100%;width:0;background:var(--ok);transition:width .15s}
-  #video{display:none}
-  @media(min-width:640px){ .grid2{grid-template-columns:1fr 1fr} }
+  #video{display:none;width:100%;border-radius:12px;margin-top:10px}
 </style>
 </head>
 <body>
@@ -88,8 +91,8 @@
     </div>
 
     <div class="row" style="margin-top:10px">
-      <label class="secondary" style="flex:1;display:inline-flex;align-items:center;justify-content:center;
-             background:#334155;border-radius:10px;padding:12px;cursor:pointer">
+      <label style="flex:1;display:inline-flex;align-items:center;justify-content:center;
+             background:#334155;border-radius:10px;padding:12px;cursor:pointer;color:#fff">
         📎 Dosya Seç
         <input type="file" id="fileInput" hidden>
       </label>
@@ -100,10 +103,10 @@
     </div>
   </section>
 
-  <!-- Bilgisayara aktarım butonu (ALŞ10 akışı) -->
+  <!-- ALŞ09'dan gelen dosya için "bilgisayara aktar" paneli -->
   <section class="card" id="handoffCard" hidden>
     <p style="margin:0 0 8px;color:var(--muted)">
-      Bu dosya, ALŞ09 üzerinden alındı. Şimdi kendi bilgisayarına aktarmak ister misin?
+      ALŞ09 üzerinden bir dosya alındı. Şimdi bunu bilgisayarına aktarmak ister misin?
     </p>
     <div class="row">
       <button id="btnHandoff">🖥️ Bilgisayarıma Aktar</button>
@@ -119,45 +122,81 @@
 </main>
 
 <script>
-(() => {
-  const $ = s => document.querySelector(s);
-  const log = (...a) => {
-    const el = $('#log');
-    el.textContent += a.join(' ') + '\n';
+(function () {
+  'use strict';
+
+  var $ = function (sel) { return document.querySelector(sel); };
+  var CHUNK = 16 * 1024;
+
+  function log() {
+    var el = $('#log');
+    if (!el) return;
+    var args = Array.prototype.slice.call(arguments);
+    el.textContent += args.join(' ') + '\n';
     el.scrollTop = el.scrollHeight;
-  };
-
-  /* ---------- Ortak durum ---------- */
-  let peer = null, conn = null;
-  let role = null;            // 'desktop' | 'mobile'
-  let receiving = null;       // {name,size,type,chunks:[],received}
-
-  /* ---------- ALŞ10 köprüsü: ALŞ09'dan kalan dosyayı yakala ---------- */
-  const pending = sessionStorage.getItem('als10_pendingFile');
-  if (pending) {
-    $('#handoffCard').hidden = false;
-    $('#btnHandoffCancel').onclick = () => {
-      sessionStorage.removeItem('als10_pendingFile');
-      $('#handoffCard').hidden = true;
-    };
   }
 
-  /* ---------- Rol seçimi ---------- */
-  $('#btnDesktop').onclick = () => startDesktop();
-  $('#btnMobile').onclick  = () => startMobile();
+  /* ---------- QR ÇİZİMİ (garantili) ---------- */
+  function drawQR(canvas, text) {
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
 
-  $('#btnHandoff').onclick = async () => {
-    // Bu butona basıldığında bu cihaz "bilgisayar" rolünü üstlenir,
-    // QR gösterilir; telefon aynı QR'ı okutarak dosyayı aktarır.
-    // Pratik senaryoda bu buton BİLGİSARDA çalıştırılır.
-    // Bu yüzden cihazı masaüstü moduna alıyoruz.
-    sessionStorage.removeItem('als10_pendingFile');
+    // Her durumda önce beyaz zemin
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
+      window.QRCode.toCanvas(canvas, text, { width: 220, margin: 1 }, function (err) {
+        if (err) {
+          console.error('QRCode hata:', err);
+          drawFallback(canvas, text);
+        }
+      });
+    } else {
+      drawFallback(canvas, text);
+    }
+  }
+
+  function drawFallback(canvas, text) {
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    ctx.font = '11px monospace';
+    var lines = text.match(/.{1,28}/g) || [text];
+    lines.forEach(function (l, i) {
+      ctx.fillText(l, 8, 16 + i * 14);
+    });
+  }
+
+  /* ---------- ALŞ10 köprüsü ---------- */
+  var handoffMeta = sessionStorage.getItem('als10_handoff_meta');
+  if (handoffMeta) {
+    $('#handoffCard').hidden = false;
+  }
+  $('#btnHandoffCancel').onclick = function () {
+    sessionStorage.removeItem('als10_handoff_meta');
     $('#handoffCard').hidden = true;
-    await startDesktop({ autosendPending: true });
+  };
+  $('#btnHandoff').onclick = function () {
+    sessionStorage.removeItem('als10_handoff_meta');
+    $('#handoffCard').hidden = true;
+    // Bu cihaz "bilgisayar" rolünü üstlenir, QR gösterir.
+    // Telefon aynı QR'ı okutup dosyayı gönderir.
+    startDesktop();
   };
 
-  /* ---------- Bilgisayar (Web) modu ---------- */
-  async function startDesktop(opts = {}) {
+  /* ---------- Rol seçimi ---------- */
+  $('#btnDesktop').onclick = function () { startDesktop(); };
+  $('#btnMobile').onclick = function () { startMobile(); };
+
+  /* ---------- BİLGİSAYAR MODU ---------- */
+  var peer = null;
+  var conn = null;
+  var role = null;
+  var receiving = null;
+
+  function startDesktop() {
     role = 'desktop';
     $('#roleCard').hidden = true;
     $('#desktopCard').hidden = false;
@@ -165,71 +204,67 @@
 
     peer = new Peer(undefined, { debug: 1 });
 
-    peer.on('open', id => {
+    peer.on('open', function (id) {
       $('#desktopId').textContent = id;
-      // QR üret
-      const url = location.href.split('#')[0] + '#offer=' + encodeURIComponent(id);
-      drawQR($('#qrCanvas'), url);
+      var url = location.origin + location.pathname + '#offer=' + encodeURIComponent(id);
       log('🟢 Peer hazır. ID:', id);
+      // Kütüphane hazır olana kadar kısa bekleme (genelde anında hazır)
+      var attempts = 0;
+      var tryDraw = function () {
+        if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
+          drawQR($('#qrCanvas'), url);
+        } else if (attempts < 30) {
+          attempts++;
+          setTimeout(tryDraw, 100);
+        } else {
+          drawQR($('#qrCanvas'), url);
+        }
+      };
+      tryDraw();
     });
 
-    peer.on('connection', c => {
+    peer.on('connection', function (c) {
       conn = c;
       log('📥 Bağlantı alındı:', c.peer);
-      bindConn(opts);
+      bindConn();
     });
 
-    peer.on('error', e => log('❌ Peer hata:', e.type, e.message));
+    peer.on('error', function (e) {
+      log('❌ Peer hata:', e.type, e.message);
+    });
   }
 
-  /* ---------- Telefon (Mobil) modu ---------- */
+  /* ---------- MOBİL MODU ---------- */
   function startMobile() {
     role = 'mobile';
     $('#roleCard').hidden = true;
     $('#mobileCard').hidden = false;
     $('#desktopCard').hidden = true;
-    $('#btnScan').onclick = () => openScanner();
+    $('#btnScan').onclick = function () { openScanner(); };
   }
 
-  /* ---------- QR çiz (kütüphanesiz, basit) ---------- */
-  // Not: Üretim için qrcode.js önerilir; burada CDN'siz minimal QR için
-  // qrcode-generator yerine hazır canvas üreticisi kullanıyoruz.
-  function drawQR(canvas, text) {
-    // Küçük bir QR encoder (qrcode-generator minimal) — gömülü değil,
-    // bunun yerine kütüphane yüklenmemişse URL'yi yaz.
-    import('https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js')
-      .then(() => window.QRCode.toCanvas(canvas, text, {width:220, margin:1}))
-      .catch(() => {
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,220,220);
-        ctx.fillStyle = '#000'; ctx.font = '11px monospace';
-        const lines = text.match(/.{1,28}/g) || [text];
-        lines.forEach((l,i)=>ctx.fillText(l,8,16+i*14));
-      });
-  }
-
-  /* ---------- QR okuyucu ---------- */
   function openScanner() {
-    const video = $('#video');
+    var video = $('#video');
     video.style.display = 'block';
     $('#mobileHint').textContent = 'Kamera açılıyor…';
 
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
-      .then(stream => {
+      .then(function (stream) {
         video.srcObject = stream;
         video.play();
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-        const tick = () => {
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        function tick() {
           if (video.readyState === video.HAVE_ENOUGH_DATA) {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             ctx.drawImage(video, 0, 0);
-            const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = window.jsQR(img.data, img.width, img.height);
+            var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            var code = window.jsQR(img.data, img.width, img.height);
             if (code && code.data) {
-              stream.getTracks().forEach(t => t.stop());
+              stream.getTracks().forEach(function (t) { t.stop(); });
               video.style.display = 'none';
               $('#mobileHint').textContent = 'QR okundu ✔';
               connectTo(code.data);
@@ -237,102 +272,86 @@
             }
           }
           requestAnimationFrame(tick);
-        };
+        }
         requestAnimationFrame(tick);
       })
-      .catch(err => {
+      .catch(function (err) {
         $('#mobileHint').textContent = 'Kamera hatası: ' + err.message;
       });
   }
 
   function connectTo(qrText) {
-    // QR içeriği: ...#offer=ID  (URL) veya düz ID
-    let id = qrText;
-    const m = qrText.match(/#offer=([^&]+)/);
+    var id = qrText;
+    var m = qrText.match(/#offer=([^&]+)/);
     if (m) id = decodeURIComponent(m[1]);
 
     peer = new Peer(undefined, { debug: 1 });
-    peer.on('open', () => {
+    peer.on('open', function () {
       log('🟢 Peer hazır. Bağlanılıyor:', id);
       conn = peer.connect(id, { reliable: true });
       bindConn();
     });
-    peer.on('error', e => log('❌', e.type, e.message));
+    peer.on('error', function (e) {
+      log('❌', e.type, e.message);
+    });
   }
 
-  /* ---------- Ortak bağlantı bağlayıcı ---------- */
-  function bindConn(opts = {}) {
-    conn.on('open', () => {
+  /* ---------- ORTAK BAĞLANTI ---------- */
+  function bindConn() {
+    conn.on('open', function () {
       log('✅ P2P bağlantı kuruldu');
       $('#transferCard').hidden = false;
       $('#desktopCard').hidden = true;
       $('#mobileCard').hidden = true;
-
-      // ALŞ10: eğer bekleyen dosya varsa otomatik gönder
-      if (opts.autosendPending) {
-        // Bu senaryoda dosya bilgisayardadır; göndermek yerine
-        // telefonun göndereceği dosyayı bekleriz. Bilgisayar rolü
-        // burada sadece QR sunar.
-      }
     });
 
-    conn.on('data', d => {
+    conn.on('data', function (d) {
       if (typeof d === 'string') {
-        try { d = JSON.parse(d); } catch { /* düz metin */ }
+        addMsg(d, 'peer');
+        return;
       }
       handleIncoming(d);
     });
 
-    conn.on('close', () => log('🔌 Bağlantı kapandı'));
-    conn.on('error', e => log('❌ Conn:', e));
+    conn.on('close', function () { log('🔌 Bağlantı kapandı'); });
+    conn.on('error', function (e) { log('❌ Conn:', e); });
   }
 
-  /* ---------- Gelen veri ---------- */
   function handleIncoming(d) {
-    if (typeof d === 'string') return addMsg(d, 'peer');
-
-    switch (d.type) {
-      case 'text':
-        addMsg(d.text, 'peer');
-        break;
-
-      case 'file-meta':
-        receiving = { name: d.name, size: d.size, mime: d.mime, chunks: [], received: 0 };
-        showProgress(`Alınıyor: ${d.name}`);
-        break;
-
-      case 'file-chunk':
-        if (!receiving) return;
-        receiving.chunks.push(d.chunk);
-        receiving.received += d.chunk.byteLength;
-        updateProgress(receiving.received / receiving.size);
-        break;
-
-      case 'file-end':
-        if (!receiving) return;
-        const blob = new Blob(receiving.chunks, { type: receiving.mime });
-        const url = URL.createObjectURL(blob);
-        addFileBubble(receiving.name, receiving.mime, url);
-        hideProgress();
-        receiving = null;
-        break;
+    if (d.type === 'text') {
+      addMsg(d.text, 'peer');
+    } else if (d.type === 'file-meta') {
+      receiving = { name: d.name, size: d.size, mime: d.mime, chunks: [], received: 0 };
+      showProgress('Alınıyor: ' + d.name);
+    } else if (d.type === 'file-chunk') {
+      if (!receiving) return;
+      receiving.chunks.push(d.chunk);
+      receiving.received += d.chunk.byteLength;
+      updateProgress(receiving.received / receiving.size);
+    } else if (d.type === 'file-end') {
+      if (!receiving) return;
+      var blob = new Blob(receiving.chunks, { type: receiving.mime });
+      var url = URL.createObjectURL(blob);
+      addFileBubble(receiving.name, receiving.mime, url);
+      hideProgress();
+      receiving = null;
     }
   }
 
-  /* ---------- Mesaj ---------- */
-  $('#btnSendMsg').onclick = () => {
-    const t = $('#msgInput').value.trim();
+  /* ---------- MESAJ ---------- */
+  $('#btnSendMsg').onclick = function () {
+    var t = $('#msgInput').value.trim();
     if (!t || !conn || !conn.open) return;
     conn.send({ type: 'text', text: t });
     addMsg(t, 'me');
     $('#msgInput').value = '';
   };
-  $('#msgInput').addEventListener('keydown', e => {
+  $('#msgInput').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') $('#btnSendMsg').click();
   });
 
   function addMsg(text, who) {
-    const el = document.createElement('div');
+    var el = document.createElement('div');
     el.className = 'msg ' + who;
     el.textContent = text;
     $('#chat').appendChild(el);
@@ -340,44 +359,42 @@
   }
 
   function addFileBubble(name, mime, url) {
-    const el = document.createElement('div');
+    var el = document.createElement('div');
     el.className = 'msg peer';
-    if (mime.startsWith('image/')) {
-      el.innerHTML = `<div>${name}</div><img src="${url}" alt="">`;
-    } else if (mime.startsWith('video/')) {
-      el.innerHTML = `<div>${name}</div><video controls src="${url}"></video>`;
+    if (mime && mime.indexOf('image/') === 0) {
+      el.innerHTML = '<div>' + name + '</div><img src="' + url + '" alt="">';
+    } else if (mime && mime.indexOf('video/') === 0) {
+      el.innerHTML = '<div>' + name + '</div><video controls src="' + url + '"></video>';
     } else {
-      el.innerHTML = `<div>${name}</div><a href="${url}" download="${name}"
-                        style="color:#93c5fd">⬇ İndir</a>`;
+      el.innerHTML = '<div>' + name + '</div><a href="' + url + '" download="' + name +
+                     '" style="color:#93c5fd">⬇ İndir</a>';
     }
     $('#chat').appendChild(el);
     $('#chat').scrollTop = $('#chat').scrollHeight;
   }
 
-  /* ---------- Dosya gönderimi (chunking) ---------- */
-  const CHUNK = 16 * 1024;
-  $('#fileInput').onchange = async e => {
-    const file = e.target.files[0];
+  /* ---------- DOSYA GÖNDERİMİ ---------- */
+  $('#fileInput').onchange = function (e) {
+    var file = e.target.files[0];
     if (!file || !conn || !conn.open) return;
 
     conn.send({ type: 'file-meta', name: file.name, size: file.size, mime: file.type });
-    showProgress(`Gönderiliyor: ${file.name}`);
+    showProgress('Gönderiliyor: ' + file.name);
 
-    let offset = 0;
-    const reader = new FileReader();
-    const readSlice = () => {
-      const slice = file.slice(offset, offset + CHUNK);
-      reader.readAsArrayBuffer(slice);
-    };
+    var offset = 0;
+    var reader = new FileReader();
 
-    reader.onload = ev => {
-      const chunk = ev.target.result;
-      conn.send({ type: 'file-chunk', chunk });
+    function readSlice() {
+      reader.readAsArrayBuffer(file.slice(offset, offset + CHUNK));
+    }
+
+    reader.onload = function (ev) {
+      var chunk = ev.target.result;
+      conn.send({ type: 'file-chunk', chunk: chunk });
       offset += chunk.byteLength;
       updateProgress(offset / file.size);
 
       if (offset < file.size) {
-        // akış kontrolü: buffer dolarsa bekle
         if (conn.dataChannel && conn.dataChannel.bufferedAmount > 8 * CHUNK) {
           setTimeout(readSlice, 30);
         } else {
@@ -386,15 +403,15 @@
       } else {
         conn.send({ type: 'file-end' });
         hideProgress();
-        // kendi tarafımızda da balon göster
-        const url = URL.createObjectURL(file);
+        var url = URL.createObjectURL(file);
         addFileBubble(file.name, file.type, url);
       }
     };
+
     readSlice();
   };
 
-  /* ---------- İlerleme ---------- */
+  /* ---------- İLERLEME ---------- */
   function showProgress(label) {
     $('#progressWrap').style.display = 'block';
     $('#progressLabel').textContent = label;
@@ -404,27 +421,16 @@
     $('#progressBar').style.width = Math.min(100, Math.round(ratio * 100)) + '%';
   }
   function hideProgress() {
-    setTimeout(() => { $('#progressWrap').style.display = 'none'; }, 400);
+    setTimeout(function () { $('#progressWrap').style.display = 'none'; }, 400);
   }
 
-  /* ---------- ALŞ10: ALŞ09'dan gelen dosyayı otomatik gönder ---------- */
-  // Eğer sayfa #send=... parametresiyle gelirse
-  const h = location.hash;
-  if (h.startsWith('#pendingFile=')) {
-    // Bilgisayarda çalıştırılan "Bilgisayarıma Aktar" akışı:
-    // Dosya zaten sessionStorage'da; kullanıcı Desktop rolünü seçip
-    // telefonun QR'ını okutması yeterli. Burada otomatik bir şey yapmıyoruz;
-    // akış: Telefon ALŞ08 mobil modda bilgisayarın QR'ını okur ve
-    // pendingFile'ı gönderir.
-  }
-
-  if (location.hash.startsWith('#offer=')) {
-    // Mobil cihaz doğrudan QR linkine tıklamışsa otomatik bağlan
-    const id = decodeURIComponent(location.hash.slice(7));
+  /* ---------- URL HASH ile otomatik bağlan ---------- */
+  if (location.hash.indexOf('#offer=') === 0) {
+    var oid = decodeURIComponent(location.hash.slice(7));
     startMobile();
     peer = new Peer(undefined);
-    peer.on('open', () => {
-      conn = peer.connect(id, { reliable: true });
+    peer.on('open', function () {
+      conn = peer.connect(oid, { reliable: true });
       bindConn();
     });
   }
