@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ALŞ09 · Hoca → Öğrenci</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+  :root{--bg:#0b1220;--card:#111c33;--ink:#e6edf7;--muted:#8ba0bf;--acc:#3b82f6;--ok:#10b981}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--ink);min-height:100dvh}
+  header{display:flex;align-items:center;gap:10px;padding:12px 14px;background:#0d1730;
+         border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:10}
+  header a{color:var(--ink);text-decoration:none;background:#1e293b;border-radius:10px;padding:8px 12px}
+  header h1{font-size:1rem;margin:0}
+  main{padding:14px;max-width:780px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+  .card{background:var(--card);border:1px solid #1e293b;border-radius:14px;padding:16px}
+  button{cursor:pointer;border:none;border-radius:10px;padding:12px 16px;background:var(--acc);
+         color:#fff;font-weight:600;font-size:.95rem}
+  button.secondary{background:#334155}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  input[type=text],input[type=file]{width:100%;padding:10px;border-radius:8px;
+        border:1px solid #334155;background:#0f1a2e;color:var(--ink)}
+  #qrBox{display:flex;justify-content:center;background:white;padding:10px;border-radius:12px}
+  #qrBox canvas{max-width:220px}
+  #log{font-family:ui-monospace,monospace;font-size:.8rem;color:var(--muted);
+       max-height:200px;overflow:auto;white-space:pre-wrap}
+  .progress{height:8px;background:#1e293b;border-radius:6px;overflow:hidden;margin-top:6px}
+  .progress > div{height:100%;width:0;background:var(--ok);transition:width .15s}
+  #video{display:none;width:100%;border-radius:12px;margin-top:10px}
+  .hint{color:var(--muted);font-size:.85rem;margin:0 0 10px}
+</style>
+</head>
+<body>
+<header>
+  <a href="./index.html">←</a>
+  <h1>ALŞ09 · Dosya Dağıtımı</h1>
+</header>
+
+<main>
+
+  <!-- Rol seçimi -->
+  <section class="card" id="roleCard">
+    <p class="hint">Rolünü seç:</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <button id="btnTeacher">👨‍🏫 Hoca</button>
+      <button id="btnStudent" class="secondary">🎓 Öğrenci</button>
+    </div>
+  </section>
+
+  <!-- HOCA -->
+  <section class="card" id="teacherCard" hidden>
+    <p class="hint">1) Göndereceğin dosyayı seç</p>
+    <input type="file" id="teacherFile">
+    <div id="qrBox" style="margin-top:14px" hidden>
+      <canvas id="qrCanvas" width="220" height="220"></canvas>
+    </div>
+    <p id="teacherIdLine" class="hint" style="text-align:center" hidden>
+      ID: <b id="teacherId">…</b>
+    </p>
+    <div style="margin-top:12px">
+      <small style="color:var(--muted)">Gönderim Günlüğü</small>
+      <div id="log"></div>
+    </div>
+  </section>
+
+  <!-- ÖĞRENCİ -->
+  <section class="card" id="studentCard" hidden>
+    <p class="hint">Hocanın ID'sini gir ya da QR'ını okut:</p>
+    <input type="text" id="teacherIdInput" placeholder="Hoca ID">
+    <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+      <button id="btnConnect">Bağlan</button>
+      <button class="secondary" id="btnScan">📷 Kamerayla QR Okut</button>
+    </div>
+    <video id="video" playsinline></video>
+    <div id="studentProgress" style="display:none;margin-top:14px">
+      <small id="studentLabel">Alınıyor…</small>
+      <div class="progress"><div id="studentBar"></div></div>
+    </div>
+    <div id="downloadWrap" style="margin-top:14px" hidden>
+      <a id="downloadLink" download style="color:#93c5fd;font-weight:600">⬇ Dosyayı İndir</a>
+      <div style="margin-top:10px">
+        <button id="btnTransferToPC">🖥️ Bilgisayarıma Aktar (ALŞ08)</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (sel) { return document.querySelector(sel); };
+
+  var isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+                 (window.matchMedia('(pointer:coarse)').matches && window.innerWidth < 900);
+
+  var CHUNK = 16 * 1024;
+
+  // Güvenli log fonksiyonu — rest parametresi ASCII üç nokta ile
+  function log() {
+    var el = $('#log');
+    if (!el) return;
+    var args = Array.prototype.slice.call(arguments);
+    el.textContent += args.join(' ') + '\n';
+    el.scrollTop = el.scrollHeight;
+  }
+
+  $('#btnTeacher').onclick = startTeacher;
+  $('#btnStudent').onclick = startStudent;
+
+  /* ================= HOCA ================= */
+  var peerT = null;
+  var students = new Map(); // peerId -> conn
+  var teacherFile = null;
+
+  function startTeacher() {
+    $('#roleCard').hidden = true;
+    $('#teacherCard').hidden = false;
+
+    peerT = new Peer(undefined, { debug: 1 });
+
+    peerT.on('open', function (id) {
+      $('#teacherId').textContent = id;
+      $('#qrBox').hidden = false;
+      $('#teacherIdLine').hidden = false;
+      var qrText = location.origin + location.pathname + '#studentJoin=' + id;
+      drawQR($('#qrCanvas'), qrText);
+      log('🟢 Hoca hazır:', id);
+    });
+
+    peerT.on('connection', function (c) {
+      c.on('open', function () {
+        students.set(c.peer, c);
+        log('📥 Öğrenci bağlandı: ' + c.peer + ' (toplam ' + students.size + ')');
+        if (teacherFile) sendToStudent(c, teacherFile);
+      });
+      c.on('close', function () {
+        students.delete(c.peer);
+        log('🔌 Ayrıldı: ' + c.peer + ' (kalan ' + students.size + ')');
+      });
+    });
+
+    peerT.on('error', function (e) {
+      log('❌ Peer hata:', e.type, e.message);
+    });
+
+    var fileEl = $('#teacherFile');
+    if (fileEl) {
+      fileEl.addEventListener('change', function (e) {
+        teacherFile = e.target.files[0];
+        if (teacherFile) {
+          log('📎 Dosya seçildi: ' + teacherFile.name + ' (' + teacherFile.size + ' B)');
+        }
+        students.forEach(function (c) {
+          if (teacherFile) sendToStudent(c, teacherFile);
+        });
+      });
+    }
+  }
+
+  function sendToStudent(conn, file) {
+    if (!conn || !conn.open) return;
+    conn.send({ type: 'file-meta', name: file.name, size: file.size, mime: file.type });
+
+    var offset = 0;
+    var reader = new FileReader();
+
+    function readSlice() {
+      var slice = file.slice(offset, offset + CHUNK);
+      reader.readAsArrayBuffer(slice);
+    }
+
+    reader.onload = function (ev) {
+      var chunk = ev.target.result;
+      conn.send({ type: 'file-chunk', chunk: chunk });
+      offset += chunk.byteLength;
+      var pct = Math.round((offset / file.size) * 100);
+      log('→ ' + conn.peer + ': %' + pct);
+      if (offset < file.size) {
+        if (conn.dataChannel && conn.dataChannel.bufferedAmount > 8 * CHUNK) {
+          setTimeout(readSlice, 30);
+        } else {
+          readSlice();
+        }
+      } else {
+        conn.send({ type: 'file-end' });
+        log('✅ ' + conn.peer + ' tamamlandı');
+      }
+    };
+
+    readSlice();
+  }
+
+  /* ================= ÖĞRENCİ ================= */
+  var peerS = null;
+  var connS = null;
+  var recv = null;
+  var lastBlob = null;
+  var lastFileName = 'dosya';
+
+  function startStudent() {
+    $('#roleCard').hidden = true;
+    $('#studentCard').hidden = false;
+
+    if (!isMobile) {
+      var scanBtn = $('#btnScan');
+      if (scanBtn) scanBtn.style.display = 'none';
+    }
+
+    $('#btnConnect').onclick = function () {
+      var id = $('#teacherIdInput').value.trim();
+      if (!id) { alert('Hoca ID gerekli'); return; }
+      connectStudent(id);
+    };
+
+    $('#btnScan').onclick = openScanner;
+
+    if (location.hash.indexOf('#studentJoin=') === 0) {
+      var hid = decodeURIComponent(location.hash.slice(13));
+      $('#teacherIdInput').value = hid;
+      connectStudent(hid);
+    }
+  }
+
+  function connectStudent(id) {
+    peerS = new Peer(undefined, { debug: 1 });
+
+    peerS.on('open', function () {
+      connS = peerS.connect(id, { reliable: true });
+
+      connS.on('open', function () {
+        log('✅ Hocaya bağlandı');
+      });
+
+      connS.on('data', function (d) {
+        if (typeof d === 'string') return;
+
+        if (d.type === 'file-meta') {
+          recv = { name: d.name, size: d.size, mime: d.mime, chunks: [], received: 0 };
+          $('#studentProgress').style.display = 'block';
+          $('#studentLabel').textContent = 'Alınıyor: ' + d.name;
+          $('#studentBar').style.width = '0%';
+        } else if (d.type === 'file-chunk') {
+          if (!recv) return;
+          recv.chunks.push(d.chunk);
+          recv.received += d.chunk.byteLength;
+          var pct = Math.min(100, Math.round((recv.received / recv.size) * 100));
+          $('#studentBar').style.width = pct + '%';
+        } else if (d.type === 'file-end') {
+          var blob = new Blob(recv.chunks, { type: recv.mime });
+          var url = URL.createObjectURL(blob);
+          var link = $('#downloadLink');
+          link.href = url;
+          link.download = recv.name;
+          link.textContent = '⬇ ' + recv.name + ' (' + Math.round(blob.size / 1024) + ' KB)';
+          $('#downloadWrap').hidden = false;
+          lastBlob = blob;
+          lastFileName = recv.name;
+
+          $('#btnTransferToPC').onclick = function () {
+            var blobUrl = URL.createObjectURL(blob);
+            sessionStorage.setItem('als10_handoff_meta', JSON.stringify({
+              name: recv.name,
+              size: recv.size,
+              type: recv.mime,
+              url: blobUrl
+            }));
+            location.href = './als08.html#pendingFile=1';
+          };
+        }
+      });
+
+      connS.on('close', function () { log('🔌 Bağlantı kapandı'); });
+    });
+
+    peerS.on('error', function (e) {
+      log('❌ Peer hata:', e.type, e.message);
+    });
+  }
+
+  /* ================= QR yaz/oku ================= */
+  function drawQR(canvas, text) {
+    import('https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js')
+      .then(function () {
+        window.QRCode.toCanvas(canvas, text, { width: 220, margin: 1 });
+      })
+      .catch(function () {
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, 220, 220);
+        ctx.fillStyle = '#000';
+        ctx.font = '11px monospace';
+        var lines = text.match(/.{1,28}/g) || [text];
+        lines.forEach(function (l, i) {
+          ctx.fillText(l, 8, 16 + i * 14);
+        });
+      });
+  }
+
+  function openScanner() {
+    var video = $('#video');
+    video.style.display = 'block';
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      .then(function (stream) {
+        video.srcObject = stream;
+        video.play();
+
+        var canvas = document.createElement('canvas');
+        var ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        function tick() {
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            var code = window.jsQR(img.data, img.width, img.height);
+            if (code && code.data) {
+              stream.getTracks().forEach(function (t) { t.stop(); });
+              video.style.display = 'none';
+              var id = code.data;
+              var m = id.match(/#studentJoin=([^&]+)/);
+              if (m) id = decodeURIComponent(m[1]);
+              $('#teacherIdInput').value = id;
+              connectStudent(id);
+              return;
+            }
+          }
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      })
+      .catch(function (err) {
+        alert('Kamera hatası: ' + err.message);
+      });
+  }
+
+})();
+</script>
+</body>
+</html>

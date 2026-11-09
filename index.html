@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ALŞ10 — Birleşik PWA</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1e3a8a">
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--acc:#3b82f6}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+       background:linear-gradient(180deg,#0f172a,#1e293b);color:var(--ink);
+       min-height:100dvh;display:flex;flex-direction:column;align-items:center;
+       padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+  header{text-align:center;padding:32px 0 16px}
+  header h1{margin:0;font-size:1.6rem;letter-spacing:.5px}
+  header p{margin:6px 0 0;color:var(--muted);font-size:.9rem}
+  .grid{display:grid;gap:16px;width:100%;max-width:520px;margin-top:16px}
+  .tile{background:var(--card);border:1px solid #334155;border-radius:16px;
+        padding:22px;text-decoration:none;color:inherit;transition:.2s;
+        display:flex;flex-direction:column;gap:6px}
+  .tile:hover,.tile:focus{border-color:var(--acc);transform:translateY(-2px)}
+  .tile h2{margin:0;font-size:1.15rem}
+  .tile small{color:var(--muted);line-height:1.4}
+  footer{margin-top:auto;padding:24px 0 12px;color:#64748b;font-size:.75rem;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>ALŞ10 · Birleşik PWA</h1>
+  <p>ALŞ08 + ALŞ09 tek çatı altında</p>
+</header>
+
+<nav class="grid">
+  <a class="tile" href="als08.html">
+    <h2>🔗 ALŞ08 — Cihazlar Arası P2P</h2>
+    <small>Bilgisayar ↔ Telefon arasında QR ile eşleşip metin ve dosya transferi</small>
+  </a>
+  <a class="tile" href="als09.html">
+    <h2>📚 ALŞ09 — Hoca → Öğrenci Dağıtımı</h2>
+    <small>Hocanın QR'ını okut, dosyayı indir; tek dokunuşla bilgisayarına aktar</small>
+  </a>
+</nav>
+
+<footer>Tokat GOÜ · Ön-Yüz Yazılım Geliştirme</footer>
+
+<script>
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js');
+  }
+</script>
+</body>
+</html>
