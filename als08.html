@@ -131,6 +131,36 @@
   var $ = function (sel) { return document.querySelector(sel); };
   var CHUNK = 16 * 1024;
 
+  /* ---------- ICE YAPILANDIRMASI (STUN + TURN) ---------- */
+  var ICE_CONFIG = {
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]
+    }
+  };
+
+  // Peer oluştururken her yerde kullanacağımız ortak seçenek
+  function peerOptions() {
+    return Object.assign({ debug: 1 }, ICE_CONFIG);
+  }
+
   function log() {
     var el = $('#log');
     if (!el) return;
@@ -145,7 +175,6 @@
     container.innerHTML = '';
 
     if (typeof QRCode === 'undefined') {
-      // Kütüphane yüklenmediyse metni göster
       var fb = document.createElement('div');
       fb.style.color = '#000';
       fb.style.fontSize = '11px';
@@ -205,7 +234,7 @@
     $('#desktopCard').hidden = false;
     $('#mobileCard').hidden = true;
 
-    peer = new Peer(undefined, { debug: 1 });
+    peer = new Peer(undefined, peerOptions());
 
     peer.on('open', function (id) {
       $('#desktopId').textContent = id;
@@ -276,7 +305,7 @@
     var m = qrText.match(/#offer=([^&]+)/);
     if (m) id = decodeURIComponent(m[1]);
 
-    peer = new Peer(undefined, { debug: 1 });
+    peer = new Peer(undefined, peerOptions());
     peer.on('open', function () {
       log('🟢 Peer hazır. Bağlanılıyor:', id);
       conn = peer.connect(id, { reliable: true });
@@ -419,7 +448,7 @@
   if (location.hash.indexOf('#offer=') === 0) {
     var oid = decodeURIComponent(location.hash.slice(7));
     startMobile();
-    peer = new Peer(undefined);
+    peer = new Peer(undefined, peerOptions());
     peer.on('open', function () {
       conn = peer.connect(oid, { reliable: true });
       bindConn();
