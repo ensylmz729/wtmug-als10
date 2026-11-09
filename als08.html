@@ -10,11 +10,11 @@
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <!-- jsQR (QR okuma) -->
 <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
-<!-- qrcodejs (QR üretme — global QRCode yapıcısı) -->
+<!-- qrcodejs (QR üretme) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
 <style>
-  :root{--bg:#0b1220;--card:#111c33;--ink:#e6edf7;--muted:#8ba0bf;--acc:#3b82f6;--ok:#10b981}
+  :root{--bg:#0b1220;--card:#111c33;--ink:#e6edf7;--muted:#8ba0bf;--acc:#3b82f6;--ok:#10b981;--warn:#f59e0b;--err:#ef4444}
   *{box-sizing:border-box}
   body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--ink);
        min-height:100dvh;display:flex;flex-direction:column}
@@ -48,6 +48,19 @@
   .progress{height:8px;background:#1e293b;border-radius:6px;overflow:hidden;margin-top:6px}
   .progress > div{height:100%;width:0;background:var(--ok);transition:width .15s}
   #video{display:none;width:100%;border-radius:12px;margin-top:10px}
+  /* Durum göstergesi */
+  #statusBar{display:flex;align-items:center;gap:8px;font-size:.85rem;padding:10px 12px;
+             border-radius:10px;background:#0f1a2e;border:1px solid #1e293b}
+  #statusDot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0}
+  .st-ok #statusDot{background:var(--ok)}
+  .st-warn #statusDot{background:var(--warn)}
+  .st-err #statusDot{background:var(--err)}
+  .st-ok{border-color:var(--ok)}
+  .st-warn{border-color:var(--warn)}
+  .st-err{border-color:var(--err)}
+  #hintBox{display:none;font-size:.85rem;line-height:1.5;padding:12px;
+           border-radius:10px;background:#1e293b;border:1px solid #334155;color:#cbd5e1}
+  #hintBox b{color:#fbbf24}
 </style>
 </head>
 <body>
@@ -58,12 +71,20 @@
 
 <main>
 
+  <!-- Durum çubuğu -->
+  <div id="statusBar"><span id="statusDot"></span><span id="statusText">Hazır — bir rol seç</span></div>
+
   <!-- Rol seçimi -->
   <section class="card" id="roleCard">
     <p style="margin:0 0 12px;color:var(--muted)">Bu cihaz hangi rolü üstlenecek?</p>
     <div class="grid2">
       <button id="btnDesktop">💻 Bilgisayar (Web)</button>
       <button id="btnMobile" class="secondary">📱 Telefon (Mobil)</button>
+    </div>
+    <div id="hintBox" style="margin-top:14px">
+      <b>Bağlantı kurulamazsa:</b> iki cihazın <b>aynı Wi-Fi ağına</b> bağlı olduğundan emin ol.
+      Farklı ağlarda (biri mobil veri, biri Wi-Fi) çalışması için geçerli bir TURN sunucusu
+      yapılandırılmalıdır.
     </div>
   </section>
 
@@ -106,7 +127,7 @@
     </div>
   </section>
 
-  <!-- ALŞ09'dan gelen dosya için "bilgisayara aktar" paneli -->
+  <!-- ALŞ09 köprüsü -->
   <section class="card" id="handoffCard" hidden>
     <p style="margin:0 0 8px;color:var(--muted)">
       ALŞ09 üzerinden bir dosya alındı. Şimdi bunu bilgisayarına aktarmak ister misin?
@@ -130,35 +151,36 @@
 
   var $ = function (sel) { return document.querySelector(sel); };
   var CHUNK = 16 * 1024;
+  var CONNECT_TIMEOUT_MS = 15000;
 
-  /* ---------- ICE YAPILANDIRMASI (STUN + TURN) ---------- */
+  /* ---------- ICE YAPILANDIRMASI ----------
+     OpenRelay çökmüş durumda, o yüzden çıkardık.
+     Google STUN + PeerJS'in kendi TURN'ü (peerjs / peerjsp).
+     Toplam 3 sunucu — tarayıcı "5+ sunucu yavaşlatır" uyarısı vermez. */
   var ICE_CONFIG = {
     config: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
+          urls: 'turn:eu-0.turn.peerjs.com:3478',
+          username: 'peerjs',
+          credential: 'peerjsp'
         }
       ]
     }
   };
 
-  // Peer oluştururken her yerde kullanacağımız ortak seçenek
   function peerOptions() {
     return Object.assign({ debug: 1 }, ICE_CONFIG);
+  }
+
+  /* ---------- DURUM ÇUBUĞU ---------- */
+  function setStatus(text, kind) {
+    var bar = $('#statusBar');
+    $('#statusText').textContent = text;
+    bar.className = '';
+    if (kind) bar.classList.add('st-' + kind);
   }
 
   function log() {
@@ -169,7 +191,26 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  /* ---------- QR ÇİZİMİ (qrcodejs ile) ---------- */
+  /* ---------- HATA TÜRLERİNİ TÜRKÇELEŞTİR ---------- */
+  function humanError(e) {
+    if (!e) return 'Bilinmeyen hata';
+    switch (e.type) {
+      case 'browser-incompatible': return 'Tarayıcı WebRTC desteklemiyor';
+      case 'invalid-id':           return 'Geçersiz ID';
+      case 'invalid-key':          return 'Geçersiz API anahtarı';
+      case 'network':              return 'Ağ hatası — internet bağlantını kontrol et';
+      case 'peer-unavailable':     return 'Karşı taraf çevrimdışı veya ID yanlış';
+      case 'ssl-unavailable':      return 'SSL/TLS hatası';
+      case 'server-error':         return 'Sunucu hatası';
+      case 'socket-error':         return 'Soket hatası';
+      case 'socket-closed':        return 'Bağlantı kapandı';
+      case 'unavailable-id':       return 'Bu ID zaten kullanımda';
+      case 'webrtc':               return 'WebRTC hatası — ağ geçişi başarısız';
+      default:                     return (e.type || 'hata') + ': ' + (e.message || '');
+    }
+  }
+
+  /* ---------- QR ÇİZİMİ ---------- */
   function drawQR(container, text) {
     if (!container) return;
     container.innerHTML = '';
@@ -222,18 +263,37 @@
   $('#btnDesktop').onclick = function () { startDesktop(); };
   $('#btnMobile').onclick = function () { startMobile(); };
 
-  /* ---------- BİLGİSAYAR MODU ---------- */
+  /* ---------- DURUMLAR ---------- */
   var peer = null;
   var conn = null;
   var role = null;
   var receiving = null;
+  var connectTimer = null;
 
+  function clearConnectTimer() {
+    if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+  }
+
+  function armConnectTimer() {
+    clearConnectTimer();
+    setStatus('Bağlanıyor… (15 sn zaman aşımı)', 'warn');
+    connectTimer = setTimeout(function () {
+      if (conn && conn.open) return;
+      setStatus('Bağlantı kurulamadı — zaman aşımı', 'err');
+      $('#hintBox').style.display = 'block';
+      log('⚠️ 15 saniye içinde bağlantı kurulamadı.');
+      log('   Cihazlar aynı Wi-Fi\'da mı? Farklı ağlar için TURN gerekir.');
+    }, CONNECT_TIMEOUT_MS);
+  }
+
+  /* ---------- BİLGİSAYAR MODU ---------- */
   function startDesktop() {
     role = 'desktop';
     $('#roleCard').hidden = true;
     $('#desktopCard').hidden = false;
     $('#mobileCard').hidden = true;
 
+    setStatus('Peer oluşturuluyor…', 'warn');
     peer = new Peer(undefined, peerOptions());
 
     peer.on('open', function (id) {
@@ -241,16 +301,25 @@
       var url = location.origin + location.pathname + '#offer=' + encodeURIComponent(id);
       log('🟢 Peer hazır. ID:', id);
       drawQR($('#qrBox'), url);
+      setStatus('QR hazır — telefonundan okut', 'ok');
     });
 
     peer.on('connection', function (c) {
       conn = c;
       log('📥 Bağlantı alındı:', c.peer);
+      setStatus('Bağlantı alındı, kanal açılıyor…', 'warn');
       bindConn();
     });
 
     peer.on('error', function (e) {
-      log('❌ Peer hata:', e.type, e.message);
+      log('❌ Peer hata:', humanError(e));
+      setStatus(humanError(e), 'err');
+    });
+
+    peer.on('disconnected', function () {
+      log('⚠️ Peer sunucusundan koptu, yeniden bağlanıyor…');
+      setStatus('Yeniden bağlanıyor…', 'warn');
+      try { peer.reconnect(); } catch (err) { /* yoksay */ }
     });
   }
 
@@ -260,6 +329,7 @@
     $('#roleCard').hidden = true;
     $('#mobileCard').hidden = false;
     $('#desktopCard').hidden = true;
+    setStatus('QR okutmak için hazır', 'warn');
     $('#btnScan').onclick = function () { openScanner(); };
   }
 
@@ -297,6 +367,7 @@
       })
       .catch(function (err) {
         $('#mobileHint').textContent = 'Kamera hatası: ' + err.message;
+        setStatus('Kamera açılamadı — izinleri kontrol et', 'err');
       });
   }
 
@@ -305,24 +376,38 @@
     var m = qrText.match(/#offer=([^&]+)/);
     if (m) id = decodeURIComponent(m[1]);
 
+    if (!id) {
+      setStatus('QR okundu ama ID bulunamadı', 'err');
+      return;
+    }
+
+    setStatus('Peer oluşturuluyor…', 'warn');
     peer = new Peer(undefined, peerOptions());
+
     peer.on('open', function () {
       log('🟢 Peer hazır. Bağlanılıyor:', id);
+      armConnectTimer();
       conn = peer.connect(id, { reliable: true });
       bindConn();
     });
+
     peer.on('error', function (e) {
-      log('❌', e.type, e.message);
+      log('❌ Peer hata:', humanError(e));
+      setStatus(humanError(e), 'err');
+      clearConnectTimer();
     });
   }
 
   /* ---------- ORTAK BAĞLANTI ---------- */
   function bindConn() {
     conn.on('open', function () {
+      clearConnectTimer();
       log('✅ P2P bağlantı kuruldu');
+      setStatus('Bağlı — aktarım hazır', 'ok');
       $('#transferCard').hidden = false;
       $('#desktopCard').hidden = true;
       $('#mobileCard').hidden = true;
+      $('#hintBox').style.display = 'none';
     });
 
     conn.on('data', function (d) {
@@ -333,8 +418,29 @@
       handleIncoming(d);
     });
 
-    conn.on('close', function () { log('🔌 Bağlantı kapandı'); });
-    conn.on('error', function (e) { log('❌ Conn:', e); });
+    conn.on('close', function () {
+      log('🔌 Bağlantı kapandı');
+      setStatus('Bağlantı kapandı', 'err');
+      clearConnectTimer();
+    });
+
+    conn.on('error', function (e) {
+      log('❌ Bağlantı hatası:', e && e.message ? e.message : e);
+      setStatus('Bağlantı hatası', 'err');
+    });
+
+    // Ice state değişimleri (bazı sürümlerde mevcut)
+    if (typeof conn.on === 'function') {
+      try {
+        conn.on('iceStateChanged', function (state) {
+          log('🧊 ICE:', state);
+          if (state === 'failed' || state === 'disconnected') {
+            setStatus('ICE bağlantısı başarısız — ağ/TURN sorunu', 'err');
+            $('#hintBox').style.display = 'block';
+          }
+        });
+      } catch (e) { /* yoksa geç */ }
+    }
   }
 
   function handleIncoming(d) {
@@ -450,8 +556,14 @@
     startMobile();
     peer = new Peer(undefined, peerOptions());
     peer.on('open', function () {
+      armConnectTimer();
       conn = peer.connect(oid, { reliable: true });
       bindConn();
+    });
+    peer.on('error', function (e) {
+      log('❌ Peer hata:', humanError(e));
+      setStatus(humanError(e), 'err');
+      clearConnectTimer();
     });
   }
 
