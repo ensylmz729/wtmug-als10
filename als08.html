@@ -6,10 +6,12 @@
 <title>ALŞ08 · P2P Transfer</title>
 <link rel="manifest" href="manifest.json">
 
-<!-- Kütüphaneler doğrudan head'de: QR üretimi kesin çalışsın -->
+<!-- PeerJS (WebRTC) -->
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<!-- jsQR (QR okuma) -->
 <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<!-- qrcodejs (QR üretme — global QRCode yapıcısı) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
 <style>
   :root{--bg:#0b1220;--card:#111c33;--ink:#e6edf7;--muted:#8ba0bf;--acc:#3b82f6;--ok:#10b981}
@@ -32,8 +34,9 @@
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   input[type=text],input[type=file]{width:100%;padding:10px;border-radius:8px;
        border:1px solid #334155;background:#0f1a2e;color:var(--ink)}
-  #qrBox{display:flex;justify-content:center;background:#fff;padding:10px;border-radius:12px}
-  #qrCanvas{width:220px;height:220px;display:block}
+  #qrBox{display:flex;justify-content:center;align-items:center;
+         background:#fff;padding:10px;border-radius:12px;min-height:240px}
+  #qrBox img,#qrBox canvas{display:block;width:220px;height:220px}
   #log{font-family:ui-monospace,Menlo,monospace;font-size:.8rem;color:var(--muted);
        max-height:160px;overflow:auto;white-space:pre-wrap}
   #chat{display:flex;flex-direction:column;gap:8px;min-height:180px;max-height:40vh;
@@ -67,7 +70,7 @@
   <!-- Bilgisayar modu: QR göster -->
   <section class="card" id="desktopCard" hidden>
     <p style="margin:0 0 10px;color:var(--muted)">Telefonundan bu QR kodu okut:</p>
-    <div id="qrBox"><canvas id="qrCanvas" width="220" height="220"></canvas></div>
+    <div id="qrBox"></div>
     <p style="text-align:center;color:var(--muted);font-size:.85rem;margin:10px 0 0">
       ID: <b id="desktopId">…</b>
     </p>
@@ -136,37 +139,39 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  /* ---------- QR ÇİZİMİ (garantili) ---------- */
-  function drawQR(canvas, text) {
-    if (!canvas) return;
-    var ctx = canvas.getContext('2d');
+  /* ---------- QR ÇİZİMİ (qrcodejs ile) ---------- */
+  function drawQR(container, text) {
+    if (!container) return;
+    container.innerHTML = '';
 
-    // Her durumda önce beyaz zemin
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
-      window.QRCode.toCanvas(canvas, text, { width: 220, margin: 1 }, function (err) {
-        if (err) {
-          console.error('QRCode hata:', err);
-          drawFallback(canvas, text);
-        }
-      });
-    } else {
-      drawFallback(canvas, text);
+    if (typeof QRCode === 'undefined') {
+      // Kütüphane yüklenmediyse metni göster
+      var fb = document.createElement('div');
+      fb.style.color = '#000';
+      fb.style.fontSize = '11px';
+      fb.style.fontFamily = 'monospace';
+      fb.style.wordBreak = 'break-all';
+      fb.style.padding = '8px';
+      fb.textContent = text;
+      container.appendChild(fb);
+      log('⚠️ QR kütüphanesi yüklenmedi, metin gösteriliyor');
+      return;
     }
-  }
 
-  function drawFallback(canvas, text) {
-    var ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#000';
-    ctx.font = '11px monospace';
-    var lines = text.match(/.{1,28}/g) || [text];
-    lines.forEach(function (l, i) {
-      ctx.fillText(l, 8, 16 + i * 14);
-    });
+    try {
+      new QRCode(container, {
+        text: text,
+        width: 220,
+        height: 220,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M
+      });
+      log('✅ QR kod üretildi');
+    } catch (e) {
+      console.error('QR oluşturma hatası:', e);
+      log('❌ QR hatası:', e.message);
+    }
   }
 
   /* ---------- ALŞ10 köprüsü ---------- */
@@ -181,8 +186,6 @@
   $('#btnHandoff').onclick = function () {
     sessionStorage.removeItem('als10_handoff_meta');
     $('#handoffCard').hidden = true;
-    // Bu cihaz "bilgisayar" rolünü üstlenir, QR gösterir.
-    // Telefon aynı QR'ı okutup dosyayı gönderir.
     startDesktop();
   };
 
@@ -208,19 +211,7 @@
       $('#desktopId').textContent = id;
       var url = location.origin + location.pathname + '#offer=' + encodeURIComponent(id);
       log('🟢 Peer hazır. ID:', id);
-      // Kütüphane hazır olana kadar kısa bekleme (genelde anında hazır)
-      var attempts = 0;
-      var tryDraw = function () {
-        if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
-          drawQR($('#qrCanvas'), url);
-        } else if (attempts < 30) {
-          attempts++;
-          setTimeout(tryDraw, 100);
-        } else {
-          drawQR($('#qrCanvas'), url);
-        }
-      };
-      tryDraw();
+      drawQR($('#qrBox'), url);
     });
 
     peer.on('connection', function (c) {
