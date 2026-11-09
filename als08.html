@@ -6,11 +6,8 @@
 <title>ALŞ08 · P2P Transfer</title>
 <link rel="manifest" href="manifest.json">
 
-<!-- PeerJS (WebRTC) -->
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-<!-- jsQR (QR okuma) -->
 <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
-<!-- qrcodejs (QR üretme) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
 <style>
@@ -48,7 +45,6 @@
   .progress{height:8px;background:#1e293b;border-radius:6px;overflow:hidden;margin-top:6px}
   .progress > div{height:100%;width:0;background:var(--ok);transition:width .15s}
   #video{display:none;width:100%;border-radius:12px;margin-top:10px}
-  /* Durum göstergesi */
   #statusBar{display:flex;align-items:center;gap:8px;font-size:.85rem;padding:10px 12px;
              border-radius:10px;background:#0f1a2e;border:1px solid #1e293b}
   #statusDot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0}
@@ -71,10 +67,8 @@
 
 <main>
 
-  <!-- Durum çubuğu -->
   <div id="statusBar"><span id="statusDot"></span><span id="statusText">Hazır — bir rol seç</span></div>
 
-  <!-- Rol seçimi -->
   <section class="card" id="roleCard">
     <p style="margin:0 0 12px;color:var(--muted)">Bu cihaz hangi rolü üstlenecek?</p>
     <div class="grid2">
@@ -83,12 +77,10 @@
     </div>
     <div id="hintBox" style="margin-top:14px">
       <b>Bağlantı kurulamazsa:</b> iki cihazın <b>aynı Wi-Fi ağına</b> bağlı olduğundan emin ol.
-      Farklı ağlarda (biri mobil veri, biri Wi-Fi) çalışması için geçerli bir TURN sunucusu
-      yapılandırılmalıdır.
+      Farklı ağlarda (biri mobil veri, biri Wi-Fi) çalışması için geçerli bir TURN sunucusu gerekir.
     </div>
   </section>
 
-  <!-- Bilgisayar modu: QR göster -->
   <section class="card" id="desktopCard" hidden>
     <p style="margin:0 0 10px;color:var(--muted)">Telefonundan bu QR kodu okut:</p>
     <div id="qrBox"></div>
@@ -97,7 +89,6 @@
     </p>
   </section>
 
-  <!-- Mobil modu: QR oku -->
   <section class="card" id="mobileCard" hidden>
     <p style="margin:0 0 10px;color:var(--muted)">Bilgisayardaki QR kodu okut:</p>
     <button id="btnScan">📷 Kamerayı Aç ve QR Okut</button>
@@ -105,15 +96,12 @@
     <p id="mobileHint" style="color:var(--muted);font-size:.85rem"></p>
   </section>
 
-  <!-- Aktarım paneli -->
   <section class="card" id="transferCard" hidden>
     <div id="chat"></div>
-
     <div class="row" style="margin-top:10px">
       <input type="text" id="msgInput" placeholder="Mesaj yaz…" autocomplete="off">
       <button id="btnSendMsg">Gönder</button>
     </div>
-
     <div class="row" style="margin-top:10px">
       <label style="flex:1;display:inline-flex;align-items:center;justify-content:center;
              background:#334155;border-radius:10px;padding:12px;cursor:pointer;color:#fff">
@@ -127,7 +115,6 @@
     </div>
   </section>
 
-  <!-- ALŞ09 köprüsü -->
   <section class="card" id="handoffCard" hidden>
     <p style="margin:0 0 8px;color:var(--muted)">
       ALŞ09 üzerinden bir dosya alındı. Şimdi bunu bilgisayarına aktarmak ister misin?
@@ -151,23 +138,48 @@
 
   var $ = function (sel) { return document.querySelector(sel); };
   var CHUNK = 16 * 1024;
-  var CONNECT_TIMEOUT_MS = 15000;
+  var CONNECT_TIMEOUT_MS = 20000;
 
   /* ---------- ICE YAPILANDIRMASI ----------
-     OpenRelay çökmüş durumda, o yüzden çıkardık.
-     Google STUN + PeerJS'in kendi TURN'ü (peerjs / peerjsp).
-     Toplam 3 sunucu — tarayıcı "5+ sunucu yavaşlatır" uyarısı vermez. */
+     Birden fazla TURN sunucusu: biri çalışmazsa tarayıcı sırayla dener.
+     ExpressTURN ana, OpenRelay yedek, PeerJS son çare. */
   var ICE_CONFIG = {
     config: {
       iceServers: [
+        // STUN — doğrudan P2P için
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+
+        // ExpressTURN — ücretsiz TURN (kayıt gerekmez)
         {
-          urls: 'turn:eu-0.turn.peerjs.com:3478',
-          username: 'peerjs',
-          credential: 'peerjsp'
+          urls: 'turn:relay1.expressturn.com:3478',
+          username: 'efIJY3VLQVJ7OFZFRV',
+          credential: 'u4w6FQyFvOH5Dqdv'
+        },
+        {
+          urls: 'turn:relay1.expressturn.com:3478?transport=tcp',
+          username: 'efIJY3VLQVJ7OFZFRV',
+          credential: 'u4w6FQyFvOH5Dqdv'
+        },
+
+        // OpenRelay (yedek — bazen çalışıyor)
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
         }
-      ]
+      ],
+      iceCandidatePoolSize: 10
     }
   };
 
@@ -175,7 +187,6 @@
     return Object.assign({ debug: 1 }, ICE_CONFIG);
   }
 
-  /* ---------- DURUM ÇUBUĞU ---------- */
   function setStatus(text, kind) {
     var bar = $('#statusBar');
     $('#statusText').textContent = text;
@@ -191,7 +202,6 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  /* ---------- HATA TÜRLERİNİ TÜRKÇELEŞTİR ---------- */
   function humanError(e) {
     if (!e) return 'Bilinmeyen hata';
     switch (e.type) {
@@ -210,11 +220,9 @@
     }
   }
 
-  /* ---------- QR ÇİZİMİ ---------- */
   function drawQR(container, text) {
     if (!container) return;
     container.innerHTML = '';
-
     if (typeof QRCode === 'undefined') {
       var fb = document.createElement('div');
       fb.style.color = '#000';
@@ -227,14 +235,10 @@
       log('⚠️ QR kütüphanesi yüklenmedi, metin gösteriliyor');
       return;
     }
-
     try {
       new QRCode(container, {
-        text: text,
-        width: 220,
-        height: 220,
-        colorDark: '#000000',
-        colorLight: '#ffffff',
+        text: text, width: 220, height: 220,
+        colorDark: '#000000', colorLight: '#ffffff',
         correctLevel: QRCode.CorrectLevel.M
       });
       log('✅ QR kod üretildi');
@@ -246,9 +250,7 @@
 
   /* ---------- ALŞ10 köprüsü ---------- */
   var handoffMeta = sessionStorage.getItem('als10_handoff_meta');
-  if (handoffMeta) {
-    $('#handoffCard').hidden = false;
-  }
+  if (handoffMeta) $('#handoffCard').hidden = false;
   $('#btnHandoffCancel').onclick = function () {
     sessionStorage.removeItem('als10_handoff_meta');
     $('#handoffCard').hidden = true;
@@ -259,34 +261,27 @@
     startDesktop();
   };
 
-  /* ---------- Rol seçimi ---------- */
   $('#btnDesktop').onclick = function () { startDesktop(); };
   $('#btnMobile').onclick = function () { startMobile(); };
 
-  /* ---------- DURUMLAR ---------- */
-  var peer = null;
-  var conn = null;
-  var role = null;
-  var receiving = null;
-  var connectTimer = null;
+  var peer = null, conn = null, role = null, receiving = null, connectTimer = null;
 
   function clearConnectTimer() {
     if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
   }
-
   function armConnectTimer() {
     clearConnectTimer();
-    setStatus('Bağlanıyor… (15 sn zaman aşımı)', 'warn');
+    setStatus('Bağlanıyor… (' + (CONNECT_TIMEOUT_MS/1000) + ' sn zaman aşımı)', 'warn');
     connectTimer = setTimeout(function () {
       if (conn && conn.open) return;
       setStatus('Bağlantı kurulamadı — zaman aşımı', 'err');
       $('#hintBox').style.display = 'block';
-      log('⚠️ 15 saniye içinde bağlantı kurulamadı.');
-      log('   Cihazlar aynı Wi-Fi\'da mı? Farklı ağlar için TURN gerekir.');
+      log('⚠️ ' + (CONNECT_TIMEOUT_MS/1000) + ' saniye içinde bağlantı kurulamadı.');
+      log('   Cihazlar aynı Wi-Fi\'da mı? Farklı ağlar için geçerli TURN gerekir.');
     }, CONNECT_TIMEOUT_MS);
   }
 
-  /* ---------- BİLGİSAYAR MODU ---------- */
+  /* ---------- BİLGİSAYAR ---------- */
   function startDesktop() {
     role = 'desktop';
     $('#roleCard').hidden = true;
@@ -319,11 +314,11 @@
     peer.on('disconnected', function () {
       log('⚠️ Peer sunucusundan koptu, yeniden bağlanıyor…');
       setStatus('Yeniden bağlanıyor…', 'warn');
-      try { peer.reconnect(); } catch (err) { /* yoksay */ }
+      try { peer.reconnect(); } catch (err) {}
     });
   }
 
-  /* ---------- MOBİL MODU ---------- */
+  /* ---------- MOBİL ---------- */
   function startMobile() {
     role = 'mobile';
     $('#roleCard').hidden = true;
@@ -342,7 +337,6 @@
       .then(function (stream) {
         video.srcObject = stream;
         video.play();
-
         var canvas = document.createElement('canvas');
         var ctx = canvas.getContext('2d', { willReadFrequently: true });
 
@@ -375,11 +369,7 @@
     var id = qrText;
     var m = qrText.match(/#offer=([^&]+)/);
     if (m) id = decodeURIComponent(m[1]);
-
-    if (!id) {
-      setStatus('QR okundu ama ID bulunamadı', 'err');
-      return;
-    }
+    if (!id) { setStatus('QR okundu ama ID bulunamadı', 'err'); return; }
 
     setStatus('Peer oluşturuluyor…', 'warn');
     peer = new Peer(undefined, peerOptions());
@@ -398,7 +388,7 @@
     });
   }
 
-  /* ---------- ORTAK BAĞLANTI ---------- */
+  /* ---------- ORTAK ---------- */
   function bindConn() {
     conn.on('open', function () {
       clearConnectTimer();
@@ -411,10 +401,7 @@
     });
 
     conn.on('data', function (d) {
-      if (typeof d === 'string') {
-        addMsg(d, 'peer');
-        return;
-      }
+      if (typeof d === 'string') { addMsg(d, 'peer'); return; }
       handleIncoming(d);
     });
 
@@ -423,24 +410,20 @@
       setStatus('Bağlantı kapandı', 'err');
       clearConnectTimer();
     });
-
     conn.on('error', function (e) {
       log('❌ Bağlantı hatası:', e && e.message ? e.message : e);
       setStatus('Bağlantı hatası', 'err');
     });
 
-    // Ice state değişimleri (bazı sürümlerde mevcut)
-    if (typeof conn.on === 'function') {
-      try {
-        conn.on('iceStateChanged', function (state) {
-          log('🧊 ICE:', state);
-          if (state === 'failed' || state === 'disconnected') {
-            setStatus('ICE bağlantısı başarısız — ağ/TURN sorunu', 'err');
-            $('#hintBox').style.display = 'block';
-          }
-        });
-      } catch (e) { /* yoksa geç */ }
-    }
+    try {
+      conn.on('iceStateChanged', function (state) {
+        log('🧊 ICE:', state);
+        if (state === 'failed' || state === 'disconnected') {
+          setStatus('ICE başarısız — ağ/TURN sorunu', 'err');
+          $('#hintBox').style.display = 'block';
+        }
+      });
+    } catch (e) {}
   }
 
   function handleIncoming(d) {
@@ -464,7 +447,6 @@
     }
   }
 
-  /* ---------- MESAJ ---------- */
   $('#btnSendMsg').onclick = function () {
     var t = $('#msgInput').value.trim();
     if (!t || !conn || !conn.open) return;
@@ -499,33 +481,23 @@
     $('#chat').scrollTop = $('#chat').scrollHeight;
   }
 
-  /* ---------- DOSYA GÖNDERİMİ ---------- */
   $('#fileInput').onchange = function (e) {
     var file = e.target.files[0];
     if (!file || !conn || !conn.open) return;
-
     conn.send({ type: 'file-meta', name: file.name, size: file.size, mime: file.type });
     showProgress('Gönderiliyor: ' + file.name);
-
     var offset = 0;
     var reader = new FileReader();
-
-    function readSlice() {
-      reader.readAsArrayBuffer(file.slice(offset, offset + CHUNK));
-    }
-
+    function readSlice() { reader.readAsArrayBuffer(file.slice(offset, offset + CHUNK)); }
     reader.onload = function (ev) {
       var chunk = ev.target.result;
       conn.send({ type: 'file-chunk', chunk: chunk });
       offset += chunk.byteLength;
       updateProgress(offset / file.size);
-
       if (offset < file.size) {
         if (conn.dataChannel && conn.dataChannel.bufferedAmount > 8 * CHUNK) {
           setTimeout(readSlice, 30);
-        } else {
-          readSlice();
-        }
+        } else { readSlice(); }
       } else {
         conn.send({ type: 'file-end' });
         hideProgress();
@@ -533,11 +505,9 @@
         addFileBubble(file.name, file.type, url);
       }
     };
-
     readSlice();
   };
 
-  /* ---------- İLERLEME ---------- */
   function showProgress(label) {
     $('#progressWrap').style.display = 'block';
     $('#progressLabel').textContent = label;
@@ -550,7 +520,6 @@
     setTimeout(function () { $('#progressWrap').style.display = 'none'; }, 400);
   }
 
-  /* ---------- URL HASH ile otomatik bağlan ---------- */
   if (location.hash.indexOf('#offer=') === 0) {
     var oid = decodeURIComponent(location.hash.slice(7));
     startMobile();
